@@ -23,6 +23,7 @@
 
 const bool rgb = (CONFIG_STRIP == RGB) || (CONFIG_STRIP == RGBW);
 const bool includeWhite = (CONFIG_STRIP == BRIGHTNESS) || (CONFIG_STRIP == RGBW);
+const bool includeColorTemp = CONFIG_COLOR_TEMP;
 
 const int BUFFER_SIZE = JSON_OBJECT_SIZE(20);
 
@@ -38,6 +39,7 @@ byte realRed = 0;
 byte realGreen = 0;
 byte realBlue = 0;
 byte realWhite = 0;
+int colorTemp = 327;  // min 154, max 500
 
 bool stateOn = false;
 
@@ -86,7 +88,13 @@ void setup() {
     pinMode(CONFIG_PIN_BLUE, OUTPUT);
   }
   if (includeWhite) {
-    pinMode(CONFIG_PIN_WHITE, OUTPUT);
+    if (includeColorTemp) {
+      pinMode(CONFIG_PIN_WW, OUTPUT);
+      pinMode(CONFIG_PIN_CW, OUTPUT);
+    } else {
+      pinMode(CONFIG_PIN_WHITE, OUTPUT);
+    }
+    
   }
 
   // Set the BUILTIN_LED based on the CONFIG_BUILTIN_LED_MODE
@@ -232,6 +240,8 @@ bool processJson(char* message) {
       flashBrightness = brightness;
     }
 
+    
+
     if (rgb && root.containsKey("color")) {
       flashRed = root["color"]["r"];
       flashGreen = root["color"]["g"];
@@ -246,6 +256,7 @@ bool processJson(char* message) {
     if (includeWhite && root.containsKey("white_value")) {
       flashWhite = root["white_value"];
     }
+    
     else {
       flashWhite = white;
     }
@@ -301,6 +312,11 @@ bool processJson(char* message) {
     }
   }
 
+
+  if (includeColorTemp && root.containsKey("color_temp")) {
+    colorTemp = (int)root["color_temp"];
+  }
+  
   return true;
 }
 
@@ -321,6 +337,11 @@ void sendState() {
 
   if (includeWhite) {
     root["white_value"] = white;
+    
+    if (includeColorTemp) {
+      root["ct"] = colorTemp;
+    }
+    
   }
 
   if (rgb && colorfade) {
@@ -334,6 +355,8 @@ void sendState() {
   else {
     root["effect"] = "null";
   }
+
+  root.printTo(Serial);
 
   char buffer[root.measureLength() + 1];
   root.printTo(buffer, sizeof(buffer));
@@ -374,7 +397,13 @@ void setColor(int inR, int inG, int inB, int inW) {
   }
 
   if (includeWhite) {
-    analogWrite(CONFIG_PIN_WHITE, inW);
+    if (includeColorTemp) {
+      analogWrite(CONFIG_PIN_CW, calculateColdIntensity(inW));
+      analogWrite(CONFIG_PIN_WW, calculateWarmIntensity(inW));
+    } else {
+      analogWrite(CONFIG_PIN_WHITE, inW);
+    }
+    
   }
 
   if (CONFIG_DEBUG) {
@@ -392,12 +421,41 @@ void setColor(int inR, int inG, int inB, int inW) {
       if (rgb) {
         Serial.print(", ");
       }
-      Serial.print("w: ");
-      Serial.print(inW);
+      if (includeColorTemp) {
+        Serial.print("cw: ");
+        Serial.print(calculateColdIntensity(inW));
+        Serial.print(", ww: ");
+        Serial.print(calculateWarmIntensity(inW));
+        
+      } else {
+        Serial.print("w: ");
+        Serial.print(inW);
+      }
+      
     }
 
     Serial.println("}");
   }
+}
+
+int calculateColdIntensity(byte lev) {
+  int ratio = (500 - colorTemp); // 500 means warm, 154 means cold
+  int bal = map(ratio, 0, 346, 0, 255);
+//  Serial.println();
+//  Serial.print("cold ratio: ");
+//  Serial.println(bal);
+  if (bal > 110) return lev;
+  return map(lev, 0, 255, 0, bal);
+}
+
+int calculateWarmIntensity(byte lev) {
+  int ratio = (500 - colorTemp); // 500 means warm, 154 means cold
+  int bal = map(ratio, 346, 0, 0, 255);
+//  Serial.println();
+//  Serial.print("warm ratio: ");
+//  Serial.println(bal);
+  if (bal > 110) return lev;
+  return map(lev, 0, 255, 0, bal);
 }
 
 void loop() {
